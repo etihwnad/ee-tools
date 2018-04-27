@@ -69,11 +69,32 @@ def warn(s):
     print('WARNING:', s)
 
 
-def output(s):
-    fpwl.write(s + '\n')
+RE_BUS = re.compile(r'^(\S+)\[(\d+):(\d+)\]$')
+def expand_bus_notation(names):
+    nodes = []
+    for n in names:
+        m = RE_BUS.match(n)
+        name, left, right = m.group(1, 2, 3)
+        # valid bus notation
+        if left is not None and right is not None:
+            start = int(left)
+            stop = int(right)
+            if start >= stop:
+                inc = -1
+            else:
+                inc = 1
+
+            for i in range(start, (stop + inc), inc):
+                s = '%s[%i]' % (name, i)
+                nodes.append(s)
+        else:
+            nodes.append(name)
+
+    return nodes
 
 
-def mkbus(d):
+
+def generate_waveform(d):
     t = Decimal('0.0')
 
     #first bit interval starts at t=0, start from this value
@@ -98,6 +119,7 @@ def mkbus(d):
 
         t += trf + tb
         lastbit = bit
+
 
 
 RE_UNIT = re.compile(r'^([0-9e\+\-\.]+)(t|g|meg|x|k|mil|m|u|n|p|f)?')
@@ -127,70 +149,127 @@ def unit(s):
 
 
 
+def read_params(f):
+    """Read name=value lines from the input file.
+    Validate agains required parameters.
+    Return dict of the pairs.
+    """
+    requiredParams = ('risefall', 'bittime', 'bitlow', 'bithigh')
+    params = {'clockdelay':None, 'clockrisefall':None}
+
+    #get parameters
+    fposition = f.tell()
+    line = f.readline()
+    while '=' in line:
+        name, value = line.split('=')
+        name = name.strip()
+        value = value.strip()
+        params[name] = value
+        fposition = f.tell()
+        line = f.readline()
+
+    #fixup file position back to start of next line
+    f.seek(fposition)
+
+    #check
+    for p in requiredParams:
+        if p not in params:
+            error("%s is not specified, aborting." % p)
+
+    info('Parameters:')
+    for p,v in params.items():
+        info('  %s = %s' % (p, v))
+
+    return params
+
+
+
+def parse_words(words):
+    """Accepts a list of strings.
+    Returns a list of '1' or '0' strings.
+    """
+    bits = []
+    for w in words:
+        if w.startswith('0x'):
+            n = 4 * (len(w) - 2)
+            w = bin(int(w[2:], 16))[2:].zfill(n)
+        elif w.startswith('0b'):
+            w = w[2:]
+
+        bits.extend([b for b in w])
+    return bits
+
+
+
+def read_vectors(f, nodes):
+    """Read the data vectors from the rest of the file.
+    """
+    signals = {n:[] for n in nodes}
+    n_signals = len(nodes)
+
+    for line in f:
+        line = line.strip()
+        words = line.split()
+        bits = parse_words(words)
+
+        if len(bits) != n_signals:
+            error("Must have same # characters as column labels: %s" % line)
+
+        for i in range(n_signals):
+            signals[nodes[i]].append(bits[i])
+
+    return signals
+
+
+
+def read_busfile(bus):
+    #read in the bus definition file
+    with open(bus) as f:
+        params = read_params(f)
+
+        #next line is column labels
+        line = f.readline()
+        names = [c.strip() for c in line.strip().split()]
+        nodes = expand_bus_notation(names)
+        params['nodes'] = nodes
+        info("Columns: %s" % nodes)
+
+        #read in signal vectors
+        signals = read_vectors(f, nodes)
+        params['signals'] = signals
+
+    return params
+
+
+
+
+# python 2 vs 3 compatibility
+try:
+    dict.iteritems
+except AttributeError:
+    #this is python3
+    def iteritems(d):
+        return iter(d.items())
+else:
+    def iteritems(d):
+        return d.iteritems()
+
 
 
 if len(sys.argv) < 2:
     usage()
     sys.exit(1)
 
-bus = sys.argv[1]
-if not bus.endswith('.bus'):
+
+bus_name = sys.argv[1]
+if not bus_name.endswith('.bus'):
     usage()
     print("Error: File must have a .bus extension")
     sys.exit(1)
 
-pwl = bus.replace('.bus', '.pwl')
 
-fbus = open(bus)
-fpwl = open(pwl, 'w')
-
-
-#read in the bus definition file
-
-#get parameters
-requiredParams = ('risefall', 'bittime', 'bitlow', 'bithigh')
-params = {'clockdelay':None, 'clockrisefall':None}
-
-line = fbus.readline()
-while '=' in line:
-    name, value = line.split('=')
-    name = name.strip()
-    value = value.strip()
-    params[name] = value
-    line = fbus.readline()
-
-#check
-for p in requiredParams:
-    if p not in params:
-        error("%s is not specified, aborting." % p)
-
-info('Parameters:')
-for p,v in params.items():
-    info('  %s = %s' % (p, v))
-
-if params['clockdelay']:
-    info("Adding a clock at 'clock' node.")
-
-#get column labels
-inputs = [c.strip() for c in line.strip().split()]
-info("Columns: %s" % inputs)
-
-#read in data
-data = {}
-for i in inputs:
-    data[i] = []
-
-for line in fbus:
-    vector = line.strip()
-    if len(vector) != len(inputs):
-        error("Must have same # characters as column labels: %s" % line.strip())
-
-    i = 0
-    for bit in vector:
-        data[inputs[i]].append(bit)
-        i += 1
-
-
+# read and parse input file
+params = read_busfile(bus_name)
 
 #get the numbers
 risefall = unit(params['risefall'])
@@ -198,39 +277,41 @@ bittime = unit(params['bittime'])
 bitlow = unit(params['bitlow'])
 bithigh = unit(params['bithigh'])
 
-#output clock definition if specified
-if params['clockdelay']:
-    #calculate clock high time
-    if params['clockrisefall']:
-        clockrisefall = unit(params['clockrisefall'])
-    else:
-        clockrisefall = risefall
+#generate output file
+pwl_name = bus_name.replace('.bus', '.pwl')
+with open(pwl_name, 'w') as fpwl:
+    output = lambda s: print(s, file=fpwl)
 
-    clockhigh = Decimal('0.5') * (bittime - clockrisefall)
-    clockperiod = bittime
+    #output clock definition if specified
+    if params['clockdelay']:
+        #calculate clock high time
+        if params['clockrisefall']:
+            clockrisefall = unit(params['clockrisefall'])
+        else:
+            clockrisefall = risefall
 
-    params['clockrisefall'] = str(clockrisefall)
-    params['clockhigh'] = str(clockhigh)
-    params['clockperiod'] = str(clockperiod)
+        clockhigh = Decimal('0.5') * (bittime - clockrisefall)
+        clockperiod = bittime
 
-    clk = 'Vclock clock 0 pulse(%(bitlow)s %(bithigh)s %(clockdelay)s %(clockrisefall)s %(clockrisefall)s %(clockhigh)s %(clockperiod)s)' % params
-    info(clk)
-    output(clk)
-    output('')
+        params['clockrisefall'] = str(clockrisefall)
+        params['clockhigh'] = str(clockhigh)
+        params['clockperiod'] = str(clockperiod)
 
-#output each input source
-for name in inputs:
-    d = data[name]
+        clk = 'Vclock clock 0 pulse(%(bitlow)s %(bithigh)s %(clockdelay)s %(clockrisefall)s %(clockrisefall)s %(clockhigh)s %(clockperiod)s)' % params
+        info(clk)
 
-    s = 'V%s %s 0 PWL' % (name, name)
-    info(s)
-    output(s)
+        output(clk)
+        output('')
 
-    #first bit interval starts at t=0, start from this value
-    bit = d[0]
-    bitv = Decimal(bit) * (bithigh - bitlow) + bitlow
 
-    mkbus(d)
-    output('')
+    #output each input source
+    for name, signal in iteritems(params['signals']):
+        #first line
+        s = 'V%s %s 0 PWL' % (name, name)
+        info(s)
+        output(s)
 
-info('Output file: ' + pwl)
+        generate_waveform(signal)
+        output('')
+
+    info('Output file: ' + pwl_name)
