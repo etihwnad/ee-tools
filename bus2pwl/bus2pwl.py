@@ -69,26 +69,30 @@ def warn(s):
     print('WARNING:', s)
 
 
-RE_BUS = re.compile(r'^(\S+)\[(\d+):(\d+)\]$')
 def expand_bus_notation(names):
     nodes = []
     for n in names:
-        m = RE_BUS.match(n)
-        name, left, right = m.group(1, 2, 3)
-        # valid bus notation
-        if left is not None and right is not None:
-            start = int(left)
-            stop = int(right)
-            if start >= stop:
-                inc = -1
-            else:
-                inc = 1
+        # parse into:  name[left:right]suffix
+        name, lbrack, tail = n.partition('[')
+        left, colon, end = tail.partition(':')
+        right, rbrack, suffix = end.partition(']')
 
-            for i in range(start, (stop + inc), inc):
-                s = '%s[%i]' % (name, i)
-                nodes.append(s)
-        else:
-            nodes.append(name)
+        # only expand a complete bus notation
+        if lbrack and colon and rbrack:
+            try:
+                start = int(left)
+                stop = int(right)
+            except ValueError:
+                warn('Incomplete or non-integer range, passing thru: %s' % n)
+                nodes.append(n)
+            else:
+                inc = 1 if (stop > start) else -1
+
+                for i in range(start, (stop + inc), inc):
+                    s = '%s[%i]%s' % (name, i, suffix)
+                    nodes.append(s)
+        else:  # pass-thru all others as-is
+            nodes.append(n)
 
     return nodes
 
