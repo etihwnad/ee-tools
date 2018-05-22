@@ -2,8 +2,10 @@
 
 # (C) Dan White <dan@whiteaudio.com>
 
+# Imports for Python 2 compatibility
 from __future__ import print_function, with_statement
 
+import argparse
 import os
 import re
 import sys
@@ -17,48 +19,9 @@ from decimal import Decimal
 # - system info + datetime in output header
 
 
-def usage():
-    print('''
-Usage: python bus2pwl.py digitalinputs.bus
-
-bus file format
-===============
-[one name=value parameter per line]
-[space-separated column labels for voltage source names AND node names]
-[one line per bit interval of 0 or 1 for each column, no spaces between]
-
-Example .bus contents for testing an adder
-==========================================
-clockdelay=500p
-clockrisefall = 100p
-risefall=200p
-bittime=1n
-bitlow=0
-bithigh=5
-a3 a2 a1 a0 b3 b2 b1 b0
-00000000
-00010001
-00010010
-11111111
-01011010
-01011011
-
-Include the generated file, which also includes the Voltage-source definitons
-for the input nodes as:
-    .include "foo.pwl"
-
-The "clockdelay=" parameter, if present, also generates a voltage source for a
-clock as "Vclock clock 0 PWL ..." with a rising edge at every bittime with an
-offset of clockdelay.  Hence, set "clockdelay=" to the maximum setup time of
-your registers and the data on each line will be clocked in at the right time.
-Parameter "clockrisefall=" is optional to separately specify the clock rise/
-fall time if it is different from the data lines rise/fall.
-''')
-
-
 def info(s):
-    print('INFO:', s)
-
+    if args.verbose:
+        print('INFO:', s)
 
 def error(s):
     print('ERROR:', s)
@@ -247,75 +210,80 @@ def read_busfile(bus):
 
 
 
-# python 2 vs 3 compatibility
-try:
-    dict.iteritems
-except AttributeError:
-    #this is python3
-    def iteritems(d):
-        return iter(d.items())
-else:
-    def iteritems(d):
-        return d.iteritems()
 
 
+if __name__ == '__main__':
+    # python 2 vs 3 compatibility
+    try:
+        dict.iteritems
+    except AttributeError:
+        #this is python3
+        def iteritems(d):
+            return iter(d.items())
+    else:
+        def iteritems(d):
+            return d.iteritems()
 
-if len(sys.argv) < 2:
-    usage()
-    sys.exit(1)
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(
+        description = "Parse a .bus file into a SPICE PWL file")
+    parser.add_argument(
+        'busfile',
+        help = "File with specifying input and clock parameters")
+    parser.add_argument(
+        '-v', '--verbose',
+        help = "Increase output verbosity",
+        action = 'store_true')
+    args = parser.parse_args()
+
+    # Basic error checking on input file
+    if not args.busfile.endswith('.bus'):
+        print("Error: Input file must have '.bus' extension")
+        sys.exit(1)
+
+    # Read and parse input file
+    params = read_busfile(args.busfile)
+
+    #get the numbers
+    risefall = unit(params['risefall'])
+    bittime = unit(params['bittime'])
+    bitlow = unit(params['bitlow'])
+    bithigh = unit(params['bithigh'])
+
+    #generate output file
+    pwl_name = args.busfile.replace('.bus', '.pwl')
+    with open(pwl_name, 'w') as fpwl:
+        output = lambda s: print(s, file=fpwl)
+        #output clock definition if specified
+        if params['clockdelay']:
+            #calculate clock high time
+            if params['clockrisefall']:
+                clockrisefall = unit(params['clockrisefall'])
+            else:
+                clockrisefall = risefall
+
+            clockhigh = Decimal('0.5') * (bittime - clockrisefall)
+            clockperiod = bittime
+
+            params['clockrisefall'] = str(clockrisefall)
+            params['clockhigh'] = str(clockhigh)
+            params['clockperiod'] = str(clockperiod)
+
+            clk = 'Vclock clock 0 pulse(%(bitlow)s %(bithigh)s %(clockdelay)s %(clockrisefall)s %(clockrisefall)s %(clockhigh)s %(clockperiod)s)' % params
+            info(clk)
+
+            output(clk)
+            output('')
 
 
-bus_name = sys.argv[1]
-if not bus_name.endswith('.bus'):
-    usage()
-    print("Error: File must have a .bus extension")
-    sys.exit(1)
+        #output each input source
+        for name, signal in iteritems(params['signals']):
+            #first line
+            s = 'V%s %s 0 PWL' % (name, name)
+            info(s)
+            output(s)
 
+            generate_waveform(signal)
+            output('')
 
-# read and parse input file
-params = read_busfile(bus_name)
-
-#get the numbers
-risefall = unit(params['risefall'])
-bittime = unit(params['bittime'])
-bitlow = unit(params['bitlow'])
-bithigh = unit(params['bithigh'])
-
-#generate output file
-pwl_name = bus_name.replace('.bus', '.pwl')
-with open(pwl_name, 'w') as fpwl:
-    output = lambda s: print(s, file=fpwl)
-
-    #output clock definition if specified
-    if params['clockdelay']:
-        #calculate clock high time
-        if params['clockrisefall']:
-            clockrisefall = unit(params['clockrisefall'])
-        else:
-            clockrisefall = risefall
-
-        clockhigh = Decimal('0.5') * (bittime - clockrisefall)
-        clockperiod = bittime
-
-        params['clockrisefall'] = str(clockrisefall)
-        params['clockhigh'] = str(clockhigh)
-        params['clockperiod'] = str(clockperiod)
-
-        clk = 'Vclock clock 0 pulse(%(bitlow)s %(bithigh)s %(clockdelay)s %(clockrisefall)s %(clockrisefall)s %(clockhigh)s %(clockperiod)s)' % params
-        info(clk)
-
-        output(clk)
-        output('')
-
-
-    #output each input source
-    for name, signal in iteritems(params['signals']):
-        #first line
-        s = 'V%s %s 0 PWL' % (name, name)
-        info(s)
-        output(s)
-
-        generate_waveform(signal)
-        output('')
-
-    info('Output file: ' + pwl_name)
+        info('Output file: ' + pwl_name)
