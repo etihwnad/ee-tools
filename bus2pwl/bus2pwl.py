@@ -1,5 +1,3 @@
-#!/usr/bin/python
-
 # (C) Dan White <dan@whiteaudio.com>
 
 # Imports for Python 2 compatibility
@@ -32,30 +30,57 @@ def warn(s):
     print('WARNING:', s)
 
 
-def expand_bus_notation(names):
-    nodes = []
-    for n in names:
-        # parse into:  name[left:right]suffix
-        name, lbrack, tail = n.partition('[')
-        left, colon, end = tail.partition(':')
-        right, rbrack, suffix = end.partition(']')
+# expand_bus:
+# Expands signals that are specified as buses using square brackets (e.g.
+# data[7:0]) into individual nodes. Returns a list of nodes given a correctly
+# formatted string containing a signal bus
+def expand_bus(signal):
+    nodes = [] # Init empty list for nodes
 
-        # only expand a complete bus notation
-        if lbrack and colon and rbrack:
-            try:
-                start = int(left)
-                stop = int(right)
-            except ValueError:
-                warn('Incomplete or non-integer range, passing thru: %s' % n)
-                nodes.append(n)
+    # parse into:  name[left:right]suffix
+    name, lbrack, tail = signal.partition('[')
+    left, colon, end = tail.partition(':')
+    right, rbrack, suffix = end.partition(']')
+
+    # only expand a complete bus - force users to be specific instead of
+    # assuming what they wanted and giving them bogus results
+    if lbrack and colon and rbrack:
+        if (not name):
+            error("No bus name for signal: %s. Did you add a space?" % signal)
+
+        try:
+            start = int(left)
+            stop = int(right)
+        except ValueError:
+            if args.permissive:
+                warn('Bad bus range: Start: %s Stop: %s Passing through as wire' % (left, right))
+                nodes.append(signal)
             else:
-                inc = 1 if (stop > start) else -1
+                error('Bad bus range: Start: %s Stop: %s Passing through as wire' % (left, right))
+        else:
+            inc = 1 if (stop > start) else -1 # [4:0] or [0:4)
+            signal_bus = range(start, (stop + inc), inc)
 
-                for i in range(start, (stop + inc), inc):
-                    s = '%s[%i]%s' % (name, i, suffix)
-                    nodes.append(s)
-        else:  # pass-thru all others as-is
-            nodes.append(n)
+            for wire in signal_bus:
+                single_signal = '%s[%i]%s' % (name, wire, suffix)
+                nodes.append(single_signal)
+
+    elif args.permissive:
+        # If the user has specified they would like signal definitions to be
+        # 'permissive', we'll just pass the improperly specified signal through
+        # as a single wire.
+        # We will use 'name' as the name of the new signal - we know that the
+        # first partition _had_ to work because the presence of '[' was
+        # what got us to this function in the first place.
+        if (name):
+            warn('Improperly specified bus: %s. Passing through.' % signal)
+            nodes.append(name)
+        else:
+            error("No bus name for signal: %s. Did you add a space?" % signal)
+
+    else:
+        # Partial bus notation - error
+        error("Improperly specified bus signal: %s" % signal)
 
     return nodes
 
@@ -115,12 +140,11 @@ def unit(s):
         error("Bad unit: %s" % s)
 
 
-
+# read_params:
+# Reads 'name=value' pairs from the top of the .bus file.
+# Ensures that all required parameters have been provided.
+# Returns a dict containing the parameters
 def read_params(f):
-    """Read name=value lines from the input file.
-    Validate agains required parameters.
-    Return dict of the pairs.
-    """
     requiredParams = ('risefall', 'bittime', 'bitlow', 'bithigh')
     params = {'clockdelay':None, 'clockrisefall':None}
 
@@ -149,69 +173,165 @@ def read_params(f):
 
     return params
 
+# read_signals:
+# Reads and tokenizes the line containing signal names from the .bus file.
+# Expands any busses specified using square brackets.
+# Returns a list of strings representing the nodes to be included in the PWL
+# file
+def read_signals(f):
+    line = f.readline()
+    signals = [tok.strip() for tok in line.strip().split()] # Tokenize line
 
+    nodes = [] # Init list of nodes
+    for signal in signals: # Find and expand buses
+        if '[' not in signal:
+            nodes.append(signal) # Not a bus signal
+        else:
+            nodes.extend(expand_bus(signal)) # Expand bus to nodes
 
-def parse_words(words):
-    """Accepts a list of strings.
-    Returns a list of '1' or '0' strings.
-    """
-    bits = []
-    for w in words:
-        if w.startswith('0x'):
-            n = 4 * (len(w) - 2)
-            w = bin(int(w[2:], 16))[2:].zfill(n)
-        elif w.startswith('0b'):
-            w = w[2:]
+    info("Nodes: %s" % nodes)
+    return nodes
 
-        bits.extend([b for b in w])
+# parse_word:
+# Accepts as an argument a string. Converts a hex value or binary value
+# specified with a leading '0b' to a string of '1's and '0's.
+def parse_word(tok):
+    if tok.startswith('0x'): # Specified as hex
+        # Calculate the length of the binary string that will result from
+        # expanding the hex value - each hex digit represents 4 binary digits
+        n = 4 * (len(tok) - 2)
+
+        # Convert hex value to binary
+        intval = int(tok[2:], 16) # Convert hex value to integer
+        binstr = bin(intval) # Convert integer value to binary string with '0b'
+        bitstr = binstr[2:] # Get rid of the '0b'
+        bits = bitstr.zfill(n) # Left-pad string with the zeros
+    elif tok.startswith('0b'): # Specified as binary
+        bits = tok[2:]
+    else: # Base not specified - assume binary literal is given
+        bits = tok
+
     return bits
 
+# expand_vector_range:
+# Expands 'range' shorthand notation in a bit vector specification into a list
+# of bit strings. Returns a list of strings.
+def expand_vector_range(pre_string, range_token):
+    range_parts = range_token.split(']')
 
+    # We now have a list of strings of the following format:
+    # ['[n_bits', '(lo_val, hi_val)']
+    n_bits = int(range_parts[0][1:]) # Remove leading '[' from nbits, make int
 
-def read_vectors(f, nodes):
-    """Read the data vectors from the rest of the file.
-    """
-    signals = {n:[] for n in nodes}
-    n_signals = len(nodes)
+    range_parts = range_parts[1].split(',') # Split high and low of range
+    range_parts[0] = int(range_parts[0][1:]) # Remove leading paren, make int
+    range_parts[1] = int(range_parts[1][:-1]) # Remove trailing paren, make int
 
+    # We now have a list containing the bounds of the range we will expand over
+    expanded_range = [] # Will soon contain a bunch of strings
+
+    range_ordered = sorted(range_parts) # Sort so that we can do a range:
+
+    if range_parts[1] > 2**n_bits: # Ensure we have enough bits for range
+        error('Expressing desired range requires more bits than specified')
+
+    direction = 1 if range_parts[0] < range_parts[1] else -1
+
+    for n in range(range_ordered[0], range_ordered[1], direction):
+        bin_str = format(n, 'b').zfill(n_bits)
+        expanded_range.append(pre_string + bin_str)
+
+    return expanded_range
+
+# add_vector:
+# Adds a bit vector, specified as a string, to the dict containing all read
+# vectors (signal_dict). Note that signal_dict is itself an entry to the
+def add_vector(vector, signals, signal_dict):
+    nsignals = len(signals) # Get expected length of vector
+    if len(vector) == nsignals: # Ensure length of vector is as expected
+        for signal, bit in zip(signals, vector):
+            signal_dict[signal] += bit
+    else:
+        error('Vector length does not match number of signals (%s): %s' % (nsignals, vector))
+    return
+
+# read_vectors:
+# Reads bit vectors line-by-line, expanding ranges as it goes.
+# Returns a list of binary numbers represented as strings of 1s and 0s
+def read_vectors(f, signal_labels):
+    nsignals = len(signal_labels) # Get the number of individual signals
+    signal_dict = dict([(label, '') for label in signal_labels])
+
+    vectors = [] # Init blank list of vectors
     for line in f:
-        line = line.strip()
-        words = line.split()
-        bits = parse_words(words)
+        range_flag = 0 # Clear range flag
+        v = ""
+        expanded_vector = []
+        tokens = line.strip().split()
+        for tok in tokens:
+            tok = tok.strip() # Strip extra whitespace
+            if '[' not in tok: # No range specified by token
+                if range_flag: # If range has been processed previously
+                    # If we've processed a range on this line, that means that
+                    # expanded_vector will be a list of strings, all of which
+                    # need the new bits to be added to them. Iterate over them
+                    # and add the elements.
+                    expanded_vector = [bitstr + parse_word(tok) for bitstr in expanded_vector]
+                else: # No range has been processed on this line
+                    # Convert token to bits; add to vector
+                    v += parse_word(tok)
+            else: # Range specified
+                # We need to expand range notation into a list of strings. The
+                # bits we've already registered need to be appended to the end
+                # of every element in the range. Pass the bits we've gathered
+                # so far as well as our 'range token' to the function that will
+                # expand them.
+                if range_flag == 0:
+                    # This is the first range we have encoutered. We just need
+                    # to expand it
+                    range_flag = 1 # Set range flag
+                    expanded_vector = expand_vector_range(v, tok)
+                else:
+                    # This is not the first range we have encoutered on this
+                    # line. More processing is required.
+                    next_exp_vector = expand_vector_range(v, tok) # expand
 
-        if len(bits) != n_signals:
-            error("Must have same # characters as column labels: %s" % line)
+                    # The length of two ranges on the same line must be the
+                    # same.
+                    if len(next_exp_vector) != len(expanded_vector):
+                        error('Ranges on the same line must have the same length: %s' % line)
 
-        for i in range(n_signals):
-            signals[nodes[i]].append(bits[i])
+                    # Add bit vectors from new token line-by-line to the
+                    # existing list of bit vectors
+                    expanded_vector = [old + new for (old, new) in zip(expanded_vector, next_exp_vector)]
 
-    return signals
+        if range_flag:
+            for vector in expanded_vector:
+                add_vector(vector, signal_labels, signal_dict)
+        else:
+            add_vector(v, signal_labels, signal_dict)
 
-
-
-def read_busfile(bus):
-    #read in the bus definition file
-    with open(bus) as f:
-        params = read_params(f)
-
-        #next line is column labels
-        line = f.readline()
-        names = [c.strip() for c in line.strip().split()]
-        nodes = expand_bus_notation(names)
-        params['nodes'] = nodes
-        info("Columns: %s" % nodes)
-
-        #read in signal vectors
-        signals = read_vectors(f, nodes)
-        params['signals'] = signals
-
-    return params
+    return signal_dict
 
 
+# parse_busfile:
+# Parses the contents of a .bus file given a path to the file
+# Returns a dict with a 'param' key, and a 'signal' key. Each are, themselves,
+# dicts containing specifications of parameters or signals
+def parse_busfile(busfile):
+    file_contents = { 'params': {}, 'signals': {} } # Init contents
+    with open(busfile) as f:
+        # Top of file will contain parameters - parse these first
+        file_contents['params'] = read_params(f)
+        # Read signal labels from the first line following parameters
+        signal_labels = read_signals(f)
+        # Read signal vectors
+        file_contents['signals'] = read_vectors(f, signal_labels)
+
+    return file_contents
 
 
-
-
+# Execution begins here if module run as a script
 if __name__ == '__main__':
     # python 2 vs 3 compatibility
     try:
@@ -234,6 +354,14 @@ if __name__ == '__main__':
         '-v', '--verbose',
         help = "Increase output verbosity",
         action = 'store_true')
+    parser.add_argument(
+        '-o', '--out',
+        help = "Name of output PWL file")
+    parser.add_argument(
+        '-p', '--permissive',
+        help = '''If specified, improperly specified bus signal names pass as
+        wires instead of triggering errors''',
+        action = 'store_true')
     args = parser.parse_args()
 
     # Basic error checking on input file
@@ -241,43 +369,44 @@ if __name__ == '__main__':
         print("Error: Input file must have '.bus' extension")
         sys.exit(1)
 
-    # Read and parse input file
-    params = read_busfile(args.busfile)
+    bus = parse_busfile(args.busfile) # Read and parse input file
 
     #get the numbers
-    risefall = unit(params['risefall'])
-    bittime = unit(params['bittime'])
-    bitlow = unit(params['bitlow'])
-    bithigh = unit(params['bithigh'])
+    risefall = unit(bus['params']['risefall'])
+    bittime = unit(bus['params']['bittime'])
+    bitlow = unit(bus['params']['bitlow'])
+    bithigh = unit(bus['params']['bithigh'])
 
     #generate output file
-    pwl_name = args.busfile.replace('.bus', '.pwl')
+    if args.out:
+        pwl_name = args.out # if user specified an output file, use it
+    else:
+        pwl_name = args.busfile.replace('.bus', '.pwl') # default out file name
     with open(pwl_name, 'w') as fpwl:
         output = lambda s: print(s, file=fpwl)
-        #output clock definition if specified
-        if params['clockdelay']:
-            #calculate clock high time
-            if params['clockrisefall']:
-                clockrisefall = unit(params['clockrisefall'])
+        # output clock definition if specified
+        if bus['params']['clockdelay']:
+            # calculate clock high time
+            if bus['params']['clockrisefall']:
+                clockrisefall = unit(bus['params']['clockrisefall'])
             else:
                 clockrisefall = risefall
 
             clockhigh = Decimal('0.5') * (bittime - clockrisefall)
             clockperiod = bittime
 
-            params['clockrisefall'] = str(clockrisefall)
-            params['clockhigh'] = str(clockhigh)
-            params['clockperiod'] = str(clockperiod)
+            bus['params']['clockrisefall'] = str(clockrisefall)
+            bus['params']['clockhigh'] = str(clockhigh)
+            bus['params']['clockperiod'] = str(clockperiod)
 
-            clk = 'Vclock clock 0 pulse(%(bitlow)s %(bithigh)s %(clockdelay)s %(clockrisefall)s %(clockrisefall)s %(clockhigh)s %(clockperiod)s)' % params
+            clk = 'Vclock clock 0 pulse(%(bitlow)s %(bithigh)s %(clockdelay)s %(clockrisefall)s %(clockrisefall)s %(clockhigh)s %(clockperiod)s)' % bus['params']
             info(clk)
 
             output(clk)
             output('')
 
-
         #output each input source
-        for name, signal in iteritems(params['signals']):
+        for name, signal in iteritems(bus['signals']):
             #first line
             s = 'V%s %s 0 PWL' % (name, name)
             info(s)

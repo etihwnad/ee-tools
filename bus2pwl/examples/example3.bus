@@ -1,0 +1,8 @@
+clockdelay = 500p
+clockrisefall = 100p
+risefall = 200p
+bittime = 1n
+bitlow = 0
+bithigh = 3.3
+d[3:0] a[7:0] oe we cs
+[4](0,15) [8](0,15) 1 0 0
