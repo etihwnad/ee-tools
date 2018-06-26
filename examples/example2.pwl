@@ -1,4 +1,3 @@
-
 Vclock clock 0 pulse(0 3.3 500p 1.000E-10 1.000E-10 4.5000E-10 1.0E-9)
 
 Vdata[7] data[7] 0 PWL
@@ -102,5 +101,3 @@ Vaddr[2] addr[2] 0 PWL
 
 Vaddr[3] addr[3] 0 PWL
 + 0 0.0
-
-.tran 16n

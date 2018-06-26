@@ -1,5 +1,5 @@
+Test of Example 1
 
-Vclock clock 0 pulse(0 3.3 500p 1.000E-10 1.000E-10 4.5000E-10 1.0E-9)
 Va a 0 PWL
 + 0 0.0
 
@@ -48,4 +48,4 @@ Vh h 0 PWL
 + 6.0000E-9 3.3
 + 6.2000E-9 0.0
 
-.tran 30n
+.end
