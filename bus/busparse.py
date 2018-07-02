@@ -125,12 +125,16 @@ def read_vectors(f_obj, signals):
             order that bits will be specified in these vectors.
     """
 
-    # Ensure that our position in f_obj is at the beginning of the 'Vectors:'
+    # Ensure that our position in f_obj is at the beginning of a 'Vectors:'
     # section
     line = f_obj.readline()
     tokens = [tok.strip() for tok in line.strip().split()]
     assert tokens[0] == 'Vectors:', "keyword 'Vectors:' expected, found {}"\
             .format(tokens[0])
+    # Read in and tokenize another line
+    fposition = f_obj.tell()
+    line = f_obj.readline()
+    tokens = [tok.strip() for tok in line.strip().split()]
 
     # Initialize a dictionary with signal names as keys and empty strings as
     # entries. 1s and 0s will be appended to these empty strings as we read in
@@ -142,9 +146,10 @@ def read_vectors(f_obj, signals):
     # specifying, but the number of strings could vary from 1 to however large
     # a user-specified range is.
     vectors = []
-    for line in f_obj:
+    while line != '' and tokens[0].lower() != 'outputs:':
         line_vectors = [''] # Temporary holding place for this line's vectors
-        tokens = [tok.strip() for tok in line.strip().split()]
+        # If we come across a line where 'Output:' is the first token on the
+        # line, we stop reading vectors and return our inputs
         for tok in tokens:
             if '[' not in tok and ']' not in tok:
                 # No range specified by token. Add the bits from this token to
@@ -175,6 +180,23 @@ def read_vectors(f_obj, signals):
             assert len(vect) == len(signals)
         vectors.extend(line_vectors)
 
+        # Read in and tokenize another line
+        fposition = f_obj.tell()
+        line = f_obj.readline()
+        # We want to eat blank lines, but also if we hit EOF we shouldn't try
+        # to keep reading lines.
+        while not line.strip():
+            # If line evaluates to true, it's a blank line, not EOF.
+            if line:
+                fposition = f_obj.tell()
+                line = f_obj.readline()
+            else:
+                # line == '', we've hit EOF. When the main while loop for this
+                # function sees that line == '', the loop will exit.
+                break # line == '', we've hit EOF. 
+        tokens = [tok.strip() for tok in line.strip().split()]
+
+    f_obj.seek(fposition)
     return vectors
 
 def expand_signal(signal):
@@ -234,11 +256,17 @@ def read_signals(f_obj):
     """
 
     line = f_obj.readline()
+    if line == '':
+        # If we see this condition, the function was called to attempt to read
+        # output vectors, but there are none to read. We'll return an empty
+        # array and our main program logic will know what to do from there.
+        return []
     # Make sure that we are at the beginning of the signal declaration section.
     # We know we're there if the first token on the first line we read in is
     # 'Signals:'.
     tokens = [tok.strip() for tok in line.strip().split()]
-    assert tokens[0] == 'Signals:', "keyword 'Signals:' expected, found {}" \
+    assert tokens[0] == 'Signals:' or tokens[0] == 'Outputs:',\
+            "keyword 'Signals:' or 'Outputs:' expected, found {}" \
             .format(tokens[0])
 
     # 'Signals:' should be alone on its line. Read in the next line.
@@ -275,7 +303,10 @@ def read_signals(f_obj):
         while not line.strip() or line[0][0] == '#':
             fposition = f_obj.tell()
             line = f_obj.readline()
-            sig_names = [tok.strip() for tok in line.strip().split()]
+            if line == '':
+                raise NameExpandError(\
+                        "'Vectors:' keyword not reached before EOL")
+        sig_names = [tok.strip() for tok in line.strip().split()]
 
     # We just found the 'Vectors:' line. Reset our position in f_obj to the
     # beginning of that line so that the read_vectors function can verify that
@@ -356,7 +387,7 @@ def parse_busfile(buspath):
     path: String that gives a path from this module to the busfile
     """
 
-    file_contents = {'params': {}, 'signals': {}}
+    file_contents = {'params': {}, 'signals': {}, 'outputs': {}}
     try:
         with open(buspath) as f:
             file_contents['params'] = read_params(f)
@@ -367,10 +398,23 @@ def parse_busfile(buspath):
             # Prepare to load in vectors
             for sig in signals:
                 file_contents['signals'][sig] = ''
-                # Create signal dict from vectors and signals
+            # Create signal dict from vectors and signals
             for vect in vectors:
                 for (sig, bit) in zip(signals, vect):
                     file_contents['signals'][sig] += bit
+            # Attempt to read outputs
+            output_signals = read_signals(f)
+            if output_signals:
+                logging.info('Output signals: {}'.format(str(output_signals)))
+                output_vectors = read_vectors(f, output_signals)
+                for sig in output_signals:
+                    file_contents['outputs'][sig] = ''
+                for vect in output_vectors:
+                    for (sig, bit) in zip(output_signals, vect):
+                        file_contents['outputs'][sig] += bit
+            else:
+                logging.info('No output signals detected')
+
     except FileNotFoundError:
         msg = 'No bus file exists at {}'.format(buspath)
         logging.critical(msg)
@@ -385,8 +429,12 @@ def write_busfile(file_contents):
         for key in file_contents['params']:
             f.write('{}, {}\n'.format(key, file_contents['params'][key]))
             f.write('\n')
-        for signal in file_contents['signals']:
-            f.write('{}, {}\n'.format(signal, file_contents['signals'][signal]))
+        f.write('\nSignals:\n')
+        for sig in file_contents['signals']:
+            f.write('{}, {}\n'.format(sig, file_contents['signals'][sig]))
+        f.write('\nOutputs:\n')
+        for sig in file_contents['outputs']:
+            f.write('{}, {}\n'.format(sig, file_contents['outputs'][sig]))
 
 if __name__ == '__main__':
     """Barebones interface for calling this module standalone

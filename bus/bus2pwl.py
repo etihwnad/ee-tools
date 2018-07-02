@@ -1,33 +1,14 @@
 # (C) Dan White <dan@whiteaudio.com>
 
-import argparse
-import os
-import re
-from decimal import Decimal
-
 # Imports for Python 2 compatibility
 from __future__ import print_function, with_statement
 
-# TODO:
-# - allow comments in input file
-# - passthru (header) comments
-# - system info + datetime in output header
-
-def info(s):
-    if args.verbose:
-        print('INFO:', s)
-
-def error(s):
-    print('ERROR:', s)
-    sys.exit(1)
-
-
-def warn(s):
-    print('WARNING:', s)
-
-
-
-
+import argparse
+import busparse
+from decimal import Decimal
+import logging
+import os
+import re
 
 def generate_waveform(d):
     t = Decimal('0.0')
@@ -55,8 +36,6 @@ def generate_waveform(d):
         t += trf + tb
         lastbit = bit
 
-
-
 RE_UNIT = re.compile(r'^([0-9e\+\-\.]+)(t|g|meg|x|k|mil|m|u|n|p|f)?')
 def unit(s):
     """Takes a string and returns the equivalent float.
@@ -80,10 +59,7 @@ def unit(s):
         else:
             return Decimal(m.group(1))
     except:
-        error("Bad unit: %s" % s)
-
-
-
+        logging.error("Bad unit: %s" % s)
 
 if __name__ == '__main__':
     # python 2 vs 3 compatibility
@@ -104,38 +80,32 @@ if __name__ == '__main__':
         'busfile',
         help = "File with specifying input and clock parameters")
     parser.add_argument(
-        'spice',
-        choices = ['ngspice', 'ltspice'],
-        help = "Informs bus2pwl which PWL specification to follow")
-    parser.add_argument(
         '-v', '--verbose',
         help = "Increase output verbosity",
         action = 'store_true')
     parser.add_argument(
         '-o', '--out',
         help = "Name of output PWL file")
-    parser.add_argument(
-        '-p', '--permissive',
-        help = '''If specified, improperly specified bus signal names pass as
-        wires instead of triggering errors''',
-        action = 'store_true')
     args = parser.parse_args()
 
-    # Basic error checking on input file
-    if not args.busfile.endswith('.bus'):
-        print("Error: Input file must have '.bus' extension")
-        sys.exit(1)
+    loglvl = logging.DEBUG if args.verbose else logging.INFO
+    logging.basicConfig(filename='bus2pwl.log', level=loglvl)
 
-    bus = parse_busfile(args.busfile) # Read and parse input file
+    busfile_abspath = os.path.abspath(args.busfile)
+    assert os.path.exists(busfile_abspath), 'busfile does not exist {}'\
+            .format(busfile_abspath)
 
-    #get the numbers
+    bus = busparse.parse_busfile(args.busfile)
+
+    # Extract numbers related to the clock from the busfile
     risefall = unit(bus['params']['risefall'])
     bittime = unit(bus['params']['bittime'])
     bitlow = unit(bus['params']['bitlow'])
     bithigh = unit(bus['params']['bithigh'])
 
-    #generate output file
+    # Generate output PWL file
     if args.out:
+        # TODO: Insert error checking on this path
         pwl_name = args.out # if user specified an output file, use it
     else:
         pwl_name = args.busfile.replace('.bus', '.pwl') # default out file name
@@ -157,7 +127,7 @@ if __name__ == '__main__':
             bus['params']['clockperiod'] = str(clockperiod)
 
             clk = 'Vclock clock 0 pulse(%(bitlow)s %(bithigh)s %(clockdelay)s %(clockrisefall)s %(clockrisefall)s %(clockhigh)s %(clockperiod)s)' % bus['params']
-            info(clk)
+            logging.info(clk)
 
             output(clk)
             output('')
@@ -166,10 +136,10 @@ if __name__ == '__main__':
         for name, signal in iteritems(bus['signals']):
             #first line
             s = 'V%s %s 0 PWL' % (name, name)
-            info(s)
+            logging.info(s)
             output(s)
 
             generate_waveform(signal)
             output('')
 
-        info('Output file: ' + pwl_name)
+        logging.info('Output file: ' + pwl_name)
