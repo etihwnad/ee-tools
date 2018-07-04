@@ -1,0 +1,33 @@
+# Example1.bus:
+# This file is intended to test the script's ability to parse all valid
+# representations of bit vectors.
+# Output from the print function should look like this:
+#
+# a, 000011010
+# b, 000010101
+# c, 000010011
+# d, 000010001
+# e, 000000001
+# f, 000011111
+# g, 001100111
+# h, 010101011
+
+clockrisefall = 100p
+risefall = 200p
+bittime = 1n
+bitlow = 0
+bithigh = 3.3
+
+Signals:
+a b c d e f g h
+
+Vectors:
+00000000
+0000 0001
+0b00 000010
+0x0 0x3
+0xF4
+0b100 0 0x5
+0 1 0 0 0x6
+1 0 1 0 0 1 1 1
+0 0xF 0b111
