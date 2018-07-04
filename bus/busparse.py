@@ -177,15 +177,17 @@ def read_vectors(f_obj, signals):
                     line_vectors = [line_vectors[0] + v for v in vector_range]
 
         for vect in line_vectors:
-            assert len(vect) == len(signals)
+            assert len(vect) == len(signals),\
+                'Vector {} has length {} and should have length {}.'\
+                .format(vect, len(vect), len(signals))
         vectors.extend(line_vectors)
 
         # Read in and tokenize another line
         fposition = f_obj.tell()
         line = f_obj.readline()
         # We want to eat blank lines, but also if we hit EOF we shouldn't try
-        # to keep reading lines.
-        while not line.strip():
+        # to keep reading lines. Also: eat comment lines
+        while not line.strip() or line[0] == '#':
             # If line evaluates to true, it's a blank line, not EOF.
             if line:
                 fposition = f_obj.tell()
