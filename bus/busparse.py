@@ -257,17 +257,17 @@ def read_signals(f_obj):
             should be the beginning of the 'Signals:' section
     """
 
+    fposition = f_obj.tell()
     line = f_obj.readline()
-    if line == '':
-        # If we see this condition, the function was called to attempt to read
-        # output vectors, but there are none to read. We'll return an empty
-        # array and our main program logic will know what to do from there.
-        return []
+    while not line.strip() or line[0] == '#':
+        fposition = f_obj.tell()
+        line = f_obj.readline()
+
     # Make sure that we are at the beginning of the signal declaration section.
     # We know we're there if the first token on the first line we read in is
     # 'Signals:'.
     tokens = [tok.strip() for tok in line.strip().split()]
-    assert tokens[0] == 'Signals:' or tokens[0] == 'Outputs:',\
+    assert tokens[0].lower() == 'signals:' or tokens[0].lower() == 'outputs:',\
             "keyword 'Signals:' or 'Outputs:' expected, found {}" \
             .format(tokens[0])
 
@@ -275,7 +275,7 @@ def read_signals(f_obj):
     fposition = f_obj.tell()
     line = f_obj.readline()
     # Ignore empty lines and comments
-    while not line.strip() or line[0][0] == '#':
+    while not line.strip() or line[0] == '#':
         fposition = f_obj.tell()
         line = f_obj.readline()
     sig_names = [tok.strip() for tok in line.strip().split()]
@@ -284,7 +284,7 @@ def read_signals(f_obj):
     # with the token 'Vectors:' will be taken to be a signal. Blank lines are
     # ignored, as are comment lines.
     signals = []
-    while sig_names[0] != 'Vectors:':
+    while sig_names[0].lower() != 'vectors:':
         for sig in sig_names:
             # Check whether the signal is a bus. If it is, expand the signal
             # bus into individual wires. If the signal is already a single wire
@@ -302,7 +302,7 @@ def read_signals(f_obj):
         fposition = f_obj.tell()
         line = f_obj.readline()
         # Ignore empty lines and comments
-        while not line.strip() or line[0][0] == '#':
+        while not line.strip() or line[0] == '#':
             fposition = f_obj.tell()
             line = f_obj.readline()
             if line == '':
@@ -331,26 +331,28 @@ def read_params(f_obj):
     """
 
     params = {}
-    # Required parameter
+    # Required parameters
+    logging.debug('Searching for input parameters')
     required_params = ['risefall', 'bittime', 'bitlow', 'bithigh']
-    for p in required_params:
-        params[p] = None
-        # Optional parameters - default to None
+    # Optional parameters
+    params['edge'] = 'rising'
     params['clockdelay'] = None
     params['clockrisefall'] = None
+    for p in required_params:
+        params[p] = None
 
     fposition = f_obj.tell()
     line = f_obj.readline()
     # Ignore empty lines and comments
-    while not line.strip() or line[0][0] == '#':
+    while not line.strip() or line[0] == '#':
         fposition = f_obj.tell()
         line = f_obj.readline()
 
     # Read in parameters, ignoring blank lines
-    while line.split()[0] != 'Signals:':
-        assert '=' in line, 'improperly formatter param line: {}'.format(line)
+    while line.split()[0].lower() != 'signals:':
+        assert '=' in line, 'improperly formatted param line: {}'.format(line)
         name, value = line.split('=')
-        name = name.strip()
+        name = name.strip().lower()
         # Add read-in param to our dict, if it is a valid param.
         # If it is not a valid param, warn the user.
         if name in params:
@@ -379,6 +381,13 @@ def read_params(f_obj):
         if not params[p]:
             raise ParamError(p)
 
+    try:
+        assert params['edge'] in ('rising', 'falling', 'none'),\
+                'Invalid edge value: {}. Default to rising.'\
+                .format(params['edge'])
+    except AssertionError:
+        params['edge'] = 'rising'
+
     return params
 
 
@@ -404,9 +413,13 @@ def parse_busfile(buspath):
             for vect in vectors:
                 for (sig, bit) in zip(signals, vect):
                     file_contents['signals'][sig] += bit
-            # Attempt to read outputs
-            output_signals = read_signals(f)
-            if output_signals:
+
+            # Read in the next line from the file. There are only two things
+            # it can be if no exceptions were thrown by read_vectors: it can
+            # be EOF, or it can start with 'Outputs:'.
+            line = f.readline()
+            if line.lower().startswith('outputs:'):
+                output_signals = read_signals(f)
                 logging.info('Output signals: {}'.format(str(output_signals)))
                 output_vectors = read_vectors(f, output_signals)
                 for sig in output_signals:
@@ -414,8 +427,11 @@ def parse_busfile(buspath):
                 for vect in output_vectors:
                     for (sig, bit) in zip(output_signals, vect):
                         file_contents['outputs'][sig] += bit
-            else:
+            elif line == '':
                 logging.info('No output signals detected')
+            else:
+                logging.error('Expected "outputs:" or EOF, got {}'\
+                        .format(line))
 
     except FileNotFoundError:
         msg = 'No bus file exists at {}'.format(buspath)
