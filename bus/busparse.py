@@ -13,6 +13,7 @@ path: String that gives a path from the module to the busfile.
 import argparse
 import os
 import logging
+from unit import unit
 
 class ParseError(Exception):
     """Base class for exceptions in this module"""
@@ -92,21 +93,50 @@ def expand_vector(range_token):
     # bounds to the values we will expand
     try:
         range_parts = range_parts[1].split(',') # Split high and low of range
-        range_parts[0] = int(range_parts[0][1:]) # Remove leading paren
-        range_parts[1] = int(range_parts[1][:-1]) # Remove trailing paren
-    except IndexError:
+        assert len(range_parts) in (2,3)
+        # Account for difference in start/stop/step vs. start/stop syntax
+        if len(range_parts) == 2:
+            start = range_parts[0]
+            step = 1
+            stop = range_parts[1]
+        elif len(range_parts) == 3:
+            start = range_parts[0]
+            step = int(range_parts[1])
+            stop = range_parts[2]
+        # Handle different bases for start value
+        if start.lower().startswith('0x'):
+            # Convert to integer using base 16
+            start = int(start[3:], 16)
+        elif start.lower().startswith('0b'):
+            # Convert to integer using base 2
+            start = int(start[3:], 2)
+        else:
+            # Convert to integer using base 10
+            start = int(start[1:])
+        # Handle different bases for the end value
+        if stop.lower().startswith('0x'):
+            # Convert to integer using base 16
+            stop = int(stop[2:-1], 16)
+        elif stop.lower().startswith('0b'):
+            # Convert to integer using base 2
+            stop = int(stop[2:-1], 2)
+        else:
+            # Convert to integer using base 10
+            stop = int(stop[:-1])
+    except (IndexError, AssertionError):
         logging.critical('Bad vector range: {}'.format(range_token))
         raise
 
-    if range_parts[1] > 2**n_bits: # Ensure the user left enough bits for range
+    if stop > 2**n_bits: # Ensure the user left enough bits for range
         logging.critical('Insufficient bits to express range for vector {}'\
                 .format(range_token))
         raise VectorRangeError(range_token)
 
     direction = 1 if range_parts[0] < range_parts[1] else -1
-    range_sorted = sorted(range_parts)
+    range_sorted = sorted((start, stop))
     expanded_range = []
-    for n in range(range_parts[0], range_parts[1], direction):
+    logging.debug('expanded range: {}'.format(list(range(range_sorted[0], (range_sorted[1] + 1), (step * direction)))))
+    for n in range(range_sorted[0], (range_sorted[1] + 1), (step * direction)):
         bin_str = format(n, 'b').zfill(n_bits)
         expanded_range.append(bin_str)
 
@@ -338,6 +368,8 @@ def read_params(f_obj):
     params['edge'] = 'rising'
     params['clockdelay'] = None
     params['clockrisefall'] = None
+    params['tsu'] = None
+    params['th'] = None
     for p in required_params:
         params[p] = None
 
@@ -381,12 +413,10 @@ def read_params(f_obj):
         if not params[p]:
             raise ParamError(p)
 
-    try:
-        assert params['edge'] in ('rising', 'falling', 'none'),\
-                'Invalid edge value: {}. Default to rising.'\
-                .format(params['edge'])
-    except AssertionError:
-        params['edge'] = 'rising'
+    valid_edge_settings = ('rising', 'falling')
+    assert params['edge'] in valid_edge_settings,\
+            'Invalid edge value: {}. Valid values are: {}'\
+            .format(params['edge'], valid_edge_settings)
 
     return params
 
@@ -419,6 +449,12 @@ def parse_busfile(buspath):
             # be EOF, or it can start with 'Outputs:'.
             line = f.readline()
             if line.lower().startswith('outputs:'):
+                assert 'th' in file_contents['params'].keys(), \
+                        'Outputs were specified for verification but no hold \
+time ("th") was specified to use for verification.'
+                assert 'tsu' in file_contents['params'].keys(), \
+                        'Outputs were specified for verification but no setup \
+time ("tsu") was specified to use for verification.'
                 output_signals = read_signals(f)
                 logging.info('Output signals: {}'.format(str(output_signals)))
                 output_vectors = read_vectors(f, output_signals)
@@ -427,6 +463,15 @@ def parse_busfile(buspath):
                 for vect in output_vectors:
                     for (sig, bit) in zip(output_signals, vect):
                         file_contents['outputs'][sig] += bit
+
+                # Check that an output was specified for all inputs
+                input_sig = list(file_contents['signals'].keys())[0]
+                output_sig = list(file_contents['outputs'].keys())[0]
+                n_input_vectors = len(file_contents['signals'][input_sig])
+                n_output_vectors = len(file_contents['outputs'][output_sig])
+                assert n_input_vectors == n_output_vectors, \
+                        'Number of output vectors ({}) does not match number \
+of input vectors ({})'.format(n_output_vectors, n_input_vectors)
             elif line == '':
                 logging.info('No output signals detected')
             else:

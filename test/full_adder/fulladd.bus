@@ -1,4 +1,4 @@
-# Example.bus:
+# fulladd.bus:
 # This file is formatted properly and sensibly. It is intended to test the
 # parser on a normal busfile, and serve as an example busfile for people that
 # are making one. This is an example input designed to quickly test a 4-bit
@@ -10,14 +10,17 @@ risefall=5n
 bittime=500n
 bitlow=0
 bithigh=5
+tsu=20n
+th=20n
 
 Signals:
 data[7:0] accu[7:0]
 
 Vectors:
-[8](0,4) 0x00
-0x00 [8](0,4)
-[8](0,2) [8](0,2)
+[8](0,0x0F) 0x00
+0x00 [8](0,0x0F)
+[8](0,0x0F) [8](0,0x0F)
+0xFF 0x01
 
 ####################
 ####################
@@ -28,7 +31,7 @@ Signals:
 sum[8:0]
 
 Vectors:
-[9](0,4)
-[9](0,4)
-0x00 0
-0 0x02
+[9](0,0x0F)
+[9](0,0x0F)
+[9](0,2,0x1E)
+1 0x00

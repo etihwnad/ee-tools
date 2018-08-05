@@ -122,7 +122,18 @@ def bus2pwl(busfile, out=None):
             f.write('\n')
 
         logging.info('Busfile translated. Output file: {}'.format(pwl_name))
-        return pwl_name
+
+    # Calculate the length of transient simulation required in order to capture
+    # all inputs
+    signal = list(bus_parsed['signals'].keys())[0]
+    n_vectors = len(bus_parsed['signals'][signal])
+    clock_period = unit(bus_params['bittime']) \
+            + 2*unit(bus_params['clockrisefall'])
+    sim_length = n_vectors * clock_period + unit(bus_params['clockdelay'])
+    print('Simulate for {:e} seconds to simulate entire waveform'\
+            .format(sim_length))
+
+    return pwl_name
 
 if __name__ == '__main__':
 
