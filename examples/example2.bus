@@ -1,0 +1,34 @@
+# Example2.bus
+# This example seeks to test the script's ability to expand ranges of vectors
+# and vector names.
+# We specify signals using both the 'downto' and 'to' notation.
+# We instantiate vector ranges by themselves on a line, and with other vectors
+# on the same line.
+#
+# Correct output:
+# data[7], 0000000000000000
+# data[6], 0000000000000000
+# data[5], 0000000000000000
+# data[4], 0000000000000000
+# data[3], 0000000011111111
+# data[2], 0000111100001111
+# data[1], 0011001100110011
+# data[0], 0101010101010101
+# addr[0], 1111000000000000
+# addr[1], 1111000000000000
+# addr[2], 1100111111111111
+# addr[3], 1010000000000000
+
+clockdelay = 500p
+clockrisefall = 100p
+risefall = 200p
+bittime = 1n
+bitlow = 0
+bithigh = 3.3
+
+Signals:
+data[7:0] addr[0:3]
+
+Vectors:
+[8](0,4) [4](15,11)
+[8](4,16) 0010
