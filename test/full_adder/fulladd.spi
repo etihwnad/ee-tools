@@ -1,0 +1,68 @@
+ SPICE deck for cell 7bitFA2{sch} from library ALU
+
+.MODEL DIFFCAP D CJO=.2MF/M^2
+
+.include c5.txt
+.include fulladd.pwl
+.global vdd gnd
+vdd vdd 0 DC 5
+vgnd gnd 0 DC 0
+
+*** SUBCIRCUIT ALU__fulladder FROM CELL fulladder{sch}
+.SUBCKT ALU__fulladder a b c cout s
+* GLOBAL gnd
+* GLOBAL vdd
+Mnmos@0 net@1 a gnd gnd N L=0.6U W=2.4U
+Mnmos@1 net@1 b gnd gnd N L=0.6U W=2.4U
+Mnmos@2 coutb c net@1 gnd N L=0.6U W=2.4U
+Mnmos@3 net@11 a gnd gnd N L=0.6U W=2.4U
+Mnmos@4 coutb b net@11 gnd N L=0.6U W=2.4U
+Mnmos@5 net@23 a gnd gnd N L=0.6U W=2.4U
+Mnmos@6 net@23 b gnd gnd N L=0.6U W=2.4U
+Mnmos@7 net@23 c gnd gnd N L=0.6U W=2.4U
+Mnmos@8 sb coutb net@23 gnd N L=0.6U W=2.4U
+Mnmos@9 net@33 a gnd gnd N L=0.6U W=2.4U
+Mnmos@10 net@32 b net@33 gnd N L=0.6U W=2.4U
+Mnmos@11 sb c net@32 gnd N L=0.6U W=2.4U
+Mnmos@12 cout coutb gnd gnd N L=0.6U W=2.4U
+Mnmos@13 s sb gnd gnd N L=0.6U W=2.4U
+Mpmos@1 net@92 c sb vdd P L=0.6U W=4.8U
+Mpmos@2 net@90 b net@92 vdd P L=0.6U W=4.8U
+Mpmos@3 vdd a net@90 vdd P L=0.6U W=4.8U
+Mpmos@4 net@94 coutb sb vdd P L=0.6U W=4.8U
+Mpmos@5 vdd b net@94 vdd P L=0.6U W=4.8U
+Mpmos@6 vdd c net@94 vdd P L=0.6U W=4.8U
+Mpmos@7 vdd a net@94 vdd P L=0.6U W=4.8U
+Mpmos@8 vdd coutb cout vdd P L=0.6U W=4.8U
+Mpmos@9 vdd a net@95 vdd P L=0.6U W=4.8U
+Mpmos@10 net@95 b coutb vdd P L=0.6U W=4.8U
+Mpmos@11 vdd a net@111 vdd P L=0.6U W=4.8U
+Mpmos@12 vdd b net@111 vdd P L=0.6U W=4.8U
+Mpmos@13 net@111 c coutb vdd P L=0.6U W=4.8U
+Mpmos@14 vdd sb s vdd P L=0.6U W=4.8U
+.ENDS ALU__fulladder
+
+
+
+*** SUBCIRCUIT _8bitFA2 FROM CELL 8bitFA2{sch}
+.SUBCKT _8bitFA2 accu[7] accu[6] accu[5] accu[4] accu[3] accu[2] accu[1] accu[0] data[7] data[6] data[5] data[4] data[3] data[2] data[1] data[0] sum[8] sum[7] sum[6] sum[5] sum[4] sum[3] sum[2] sum[1] sum[0]
+* GLOBAL gnd
+* GLOBAL vdd
+
+Xfulladde@8 data[0] accu[0] gnd net@6 sum[0] ALU__fulladder
+Xfulladde@9 data[1] accu[1] net@6 net@5 sum[1] ALU__fulladder
+Xfulladde@10 data[2] accu[2] net@5 net@4 sum[2] ALU__fulladder
+Xfulladde@11 data[3] accu[3] net@4 net@3 sum[3] ALU__fulladder
+Xfulladde@12 data[4] accu[4] net@3 net@2 sum[4] ALU__fulladder
+Xfulladde@13 data[5] accu[5] net@2 net@1 sum[5] ALU__fulladder
+Xfulladde@14 data[6] accu[6] net@1 net@0 sum[6] ALU__fulladder
+Xfulladde@15 data[7] accu[7] net@0 sum[8] sum[7] ALU__fulladder
+
+.ENDS _8bitFA2
+
+
+X_8bitFA2 accu[7] accu[6] accu[5] accu[4] accu[3] accu[2] accu[1] accu[0] data[7] data[6] data[5] data[4] data[3] data[2] data[1] data[0] sum[8] sum[7] sum[6] sum[5] sum[4] sum[3] sum[2] sum[1] sum[0] _8bitFA2
+
+.tran 5n 20.4u
+
+.END
